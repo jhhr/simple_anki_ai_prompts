@@ -80,18 +80,6 @@ def bulk_new_note_all_ops(
         return
 
     message = "Running new note all ops"
-    rate_limits = config.get("rate_limits", {})
-    op_model_keys = [
-        "make_meanings_model",
-        "word_meaning_model",
-        "kanjify_sentence_model",
-        "extract_words_model",
-    ]
-    op_rate_limits = [
-        rate_limits.get(config.get(k, ""), None) for k in op_model_keys if config.get(k)
-    ]
-    valid_rate_limits = [rl for rl in op_rate_limits if rl is not None and rl > 0]
-    rate_limit = min(valid_rate_limits) if valid_rate_limits else None
     processed_words_set: set[str] = set()
     all_generated_meanings_dict = load_meanings_dict_from_file()
 
@@ -125,7 +113,6 @@ def bulk_new_note_all_ops(
         progress_updater,
         notes_to_add_dict=notes_to_add_dict,
         notes_to_update_dict=notes_to_update_dict,
-        rate_limit=rate_limit,
         on_end=on_end,
     )
 

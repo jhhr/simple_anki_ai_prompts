@@ -9,3 +9,4 @@ lib/*
 user_files/*
 logs/
 output/
+.pytest_cache

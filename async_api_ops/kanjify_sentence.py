@@ -357,12 +357,6 @@ def bulk_kanjify_notes_op(
     if not config:
         showWarning("Missing addon configuration")
         return
-    model = config.get("kanjify_sentence_model", "")
-    if model.startswith("/"):
-        # If the model is a custom endpoint, apply together rate_limit
-        rate_limit = config.get("rate_limits", {}).get("together", None)
-    else:
-        rate_limit = config.get("rate_limits", {}).get(model, None)
     message = "Kanjifying sentences"
     op = kanjify_sentence_in_note
     return bulk_notes_op(
@@ -375,7 +369,6 @@ def bulk_kanjify_notes_op(
         progress_updater,
         notes_to_add_dict,
         notes_to_update_dict,
-        rate_limit=rate_limit,
     )
 
 

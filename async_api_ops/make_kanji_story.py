@@ -243,8 +243,6 @@ def bulk_make_stories_op(
     if not config:
         showWarning("Missing addon configuration")
         return
-    model = config.get("kanji_story_model", "")
-    rate_limit = config.get("rate_limits", {}).get(model, None)
     message = "Updated stories"
     op = make_story_for_note
     return bulk_notes_op(
@@ -257,7 +255,6 @@ def bulk_make_stories_op(
         progress_updater,
         notes_to_add_dict,
         notes_to_update_dict,
-        rate_limit=rate_limit,
     )
 
 

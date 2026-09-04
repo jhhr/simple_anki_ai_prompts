@@ -10,6 +10,10 @@ from aqt.browser import Browser
 from aqt.utils import showWarning
 from collections.abc import Sequence
 
+from .collection_access import (
+    find_notes as col_find_notes,
+    get_note as col_get_note,
+)
 from .base_ops import (
     get_response,
     bulk_notes_op,
@@ -66,10 +70,10 @@ def get_sentences_for_note(
         return [cur_note_sentence]
     query = f'"{word_list_field}:*{note.id}*" -nid:{note.id}'
     logger.debug(f"Getting sentences for note {note.id} with query: {query}")
-    other_sentence_note_ids = mw.col.find_notes(query)
+    other_sentence_note_ids = col_find_notes(query)
     other_sentences = [] if exclude_self else [cur_note_sentence]
     for onid in other_sentence_note_ids:
-        onote = mw.col.get_note(onid)
+        onote = col_get_note(onid)
         if sentence_field in onote and onote[sentence_field] not in other_sentences:
             other_sentences.append(make_en_and_jp_sentence(onote))
     return other_sentences
@@ -113,11 +117,11 @@ def get_other_meaning_notes(
         f' ("{word_normal_field}:{note[word_normal_field]}" OR'
         f' "{word_field}:{note[word_field]}")'
     )
-    other_meaning_note_ids = mw.col.find_notes(meaning_notes_query)
+    other_meaning_note_ids = col_find_notes(meaning_notes_query)
     notes_to_update_dict = notes_to_update_dict or {}
     other_meaning_notes = [
         (
-            mw.col.get_note(onid)
+            col_get_note(onid)
             if allow_reupdate_existing or onid not in notes_to_update_dict
             else notes_to_update_dict[onid]
         )
@@ -952,8 +956,6 @@ def bulk_clean_notes_op(
     if not config:
         showWarning("Missing addon configuration")
         return
-    model = config.get("word_meaning_model", "")
-    rate_limit = config.get("rate_limits", {}).get(model, None)
     message = "Cleaning meaning"
 
     media_path = Path(mw.pm.profileFolder(), "collection.media")
@@ -993,7 +995,6 @@ def bulk_clean_notes_op(
         progress_updater,
         notes_to_add_dict=notes_to_add_dict,
         notes_to_update_dict=notes_to_update_dict,
-        rate_limit=rate_limit,
         on_end=on_end,
     )
 

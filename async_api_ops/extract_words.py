@@ -1093,8 +1093,6 @@ def bulk_extract_from_notes_op(
     if not config:
         showWarning("Missing addon configuration")
         return
-    model = config.get("extract_words_model", "")
-    rate_limit = config.get("rate_limits", {}).get(model, None)
     message = "Extracting words"
     op = extract_words_in_note
     return bulk_notes_op(
@@ -1107,7 +1105,6 @@ def bulk_extract_from_notes_op(
         progress_updater,
         notes_to_add_dict,
         notes_to_update_dict,
-        rate_limit=rate_limit,
     )
 
 
@@ -1132,11 +1129,6 @@ def bulk_extract_words_test_compare_from_notes_op(
         return
     model = config.get("extract_words_model", "")
     logger.debug(f"Model for extract words test compare: {model}")
-    if model.startswith("/"):
-        # If the model is a custom endpoint, apply together rate_limit
-        rate_limit = config.get("rate_limits", {}).get("together", None)
-    else:
-        rate_limit = config.get("rate_limits", {}).get(model, None)
     message = "Testing extract words prompt"
     op = extract_words_test_compare_in_note
     return bulk_notes_op(
@@ -1149,7 +1141,6 @@ def bulk_extract_words_test_compare_from_notes_op(
         progress_updater,
         notes_to_add_dict,
         notes_to_update_dict,
-        rate_limit=rate_limit,
     )
 
 

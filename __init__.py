@@ -1,6 +1,8 @@
 import os
 import sys
 import logging
+import threading
+import time
 from datetime import datetime
 
 from anki import hooks
@@ -18,6 +20,7 @@ if lib_path not in sys.path:
 
 # E402 - module level import not at top of file
 from .utils import get_field_config  # noqa: E402
+from .async_api_ops.diagnostics import WORKER_THREAD_PREFIX  # noqa: E402
 
 
 from .async_api_ops.clean_meaning import (  # noqa: E402
@@ -85,6 +88,80 @@ def setup_addon_logging():
 setup_addon_logging()
 
 
+# Marks the handlers this addon attaches, so they can be found and closed again
+_ADDON_HANDLER_FLAG = "_simple_anki_ai_prompts_handler"
+
+
+# How long to keep waiting for a run's threads before closing its log file anyway. Long enough
+# for a cancelled run to finish unwinding, short enough that the file doesn't stay open for the
+# session if something never exits.
+_LOG_CLOSE_TIMEOUT_SECONDS = 300
+_LOG_CLOSE_POLL_SECONDS = 2.0
+
+
+def _addon_threads_alive() -> bool:
+    """Whether any of this addon's worker threads is still running.
+
+    A run's threads outlive the operation on purpose: a cancelled run cannot interrupt a
+    request already in flight, so its threads unwind on their own afterwards - and what they
+    log while doing it is the whole point of the cancellation diagnostics.
+    """
+    return any(
+        thread.name.startswith(WORKER_THREAD_PREFIX) and thread.is_alive()
+        for thread in threading.enumerate()
+    )
+
+
+def _close_handler_when_idle(handler: logging.Handler) -> None:
+    """Close a detached handler, once nothing is still writing through it.
+
+    Closing it straight away closed the file out from under a cancelled run's threads. They
+    keep logging as they unwind, and a handler whose stream has been closed re-opens the file
+    on the next record - so the descriptor this function exists to release was leaked after
+    all, and the run's last diagnostics ended up somewhere nothing was looking.
+    """
+
+    def close_quietly() -> None:
+        try:
+            handler.close()
+        except Exception:
+            pass
+
+    if not _addon_threads_alive():
+        close_quietly()
+        return
+
+    def wait_and_close() -> None:
+        deadline = time.monotonic() + _LOG_CLOSE_TIMEOUT_SECONDS
+        while time.monotonic() < deadline and _addon_threads_alive():
+            time.sleep(_LOG_CLOSE_POLL_SECONDS)
+        close_quietly()
+
+    threading.Thread(target=wait_and_close, name="sap_log_closer", daemon=True).start()
+
+
+def close_previous_log_handlers(logger_instance: logging.Logger) -> None:
+    """Detach any log handler this addon attached earlier, and close it once it is idle.
+
+    A handler was added every time the browser context menu was built or a field lost focus,
+    and none were ever removed. They accumulate for the lifetime of the session, so every log
+    record gets written once per handler - and with several worker threads logging at once
+    that turns into a great deal of redundant file I/O. It also keeps every previous log file
+    open, which is why they can't be deleted until Anki is closed.
+
+    Detaching is immediate; the close waits for the threads that may still be writing.
+
+    Nothing detached here can belong to an operation still running. Every caller is a UI hook -
+    building the browser context menu, unfocusing a field, adding a note - and Anki's progress
+    dialog owns the UI while an operation is in progress, so none of them can fire until it has
+    finished. Cancelling is the only thing the user can do meanwhile.
+    """
+    for handler in list(logger_instance.handlers):
+        if getattr(handler, _ADDON_HANDLER_FLAG, False):
+            logger_instance.removeHandler(handler)
+            _close_handler_when_idle(handler)
+
+
 def create_call_log_handler(function_name: str) -> logging.Handler:
     """Create a new file handler for a specific function call"""
     config = mw.addonManager.getConfig(__name__) or {}
@@ -107,6 +184,7 @@ def create_call_log_handler(function_name: str) -> logging.Handler:
         handler.setFormatter(
             logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         )
+        setattr(handler, _ADDON_HANDLER_FLAG, True)
         return handler
 
     # Create logs directory
@@ -118,10 +196,12 @@ def create_call_log_handler(function_name: str) -> logging.Handler:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = os.path.join(logs_dir, f"{function_name}_{timestamp}.log")
 
-    # Create handler
-    handler = logging.FileHandler(log_file, encoding="utf-8")
+    # Create handler. delay=True so the file isn't opened (or created) until something is
+    # actually logged - building the context menu shouldn't leave an empty log file behind.
+    handler = logging.FileHandler(log_file, encoding="utf-8", delay=True)
     handler.setLevel(log_level)
     handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+    setattr(handler, _ADDON_HANDLER_FLAG, True)
 
     return handler
 
@@ -132,6 +212,8 @@ def on_browser_will_show_context_menu(browser: Browser, menu: QMenu):
     logger = logging.getLogger(__name__)
 
     if handler:
+        # Replace the previous run's handler rather than stacking another one on top
+        close_previous_log_handlers(logger)
         logger.addHandler(handler)
 
     # Create a new action for the context menu
@@ -279,6 +361,8 @@ def run_op_on_field_unfocus(changed: bool, note: Note, field_idx: int):
     logger = logging.getLogger(__name__)
 
     if handler:
+        # Replace the previous run's handler rather than stacking another one on top
+        close_previous_log_handlers(logger)
         logger.addHandler(handler)
 
     note_type = note.note_type()
@@ -309,6 +393,8 @@ def run_op_on_add_note(note: Note):
     logger = logging.getLogger(__name__)
 
     if handler:
+        # Replace the previous run's handler rather than stacking another one on top
+        close_previous_log_handlers(logger)
         logger.addHandler(handler)
 
     note_type = note.note_type()
